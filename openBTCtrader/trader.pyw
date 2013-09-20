@@ -14,10 +14,9 @@ from matplotlib.figure import Figure
 from trader_designer import Ui_MainWindow
 
 #market API modules
+from apis import mtGoxAPI
 marketList = {}
-import MtGoxAPI
-marketList['MtGox'] = MtGoxAPI.Mtgox
-
+marketList['MtGox'] = mtGoxAPI.Mtgox
 
 class mainWindow(QtGui.QMainWindow):
     '''
@@ -203,7 +202,7 @@ class mainWindow(QtGui.QMainWindow):
             if item.checkState(0):
                 keyList.append(key)
             item.setText(1, '{0:.2f}'.format(data[key]))
-        print keyList
+
         self.mplWidget.update_figure(self.markets[market]['data'], keyList)
 
 class MplCanvas(FigureCanvas):
