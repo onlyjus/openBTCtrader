@@ -1,7 +1,44 @@
 # -*- coding: utf-8 -*-
+"""
+If you find this software useful please donate BTC to:
+    1MBGoL4bTtkUNK9mATosdgb8X9V6QA7LiV
+
+
+openBTCtrader License Agreement (MIT License)
+--------------------------------------
+
+Copyright (c) 2013 Justin Weber
+
+Permission is hereby granted, free of charge, to any person
+obtaining a copy of this software and associated documentation
+files (the "Software"), to deal in the Software without
+restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+"""
+
+__version__ = '0.1'
+__license__ = __doc__
+__project_url__ = 'https://github.com/onlyjus/openBTCtrader'
 
 #python core imports
-import sys, datetime, hashlib, time, random
+import sys, datetime, hashlib, time, random, json
+from Crypto.Cipher import AES
+from Crypto import Random
 
 #additional libraries
 import pandas
@@ -17,6 +54,10 @@ from trader_designer import Ui_MainWindow
 from apis import mtGoxAPI
 marketList = {}
 marketList['MtGox'] = mtGoxAPI.Mtgox
+
+availableMarkets = set(marketList.keys())
+
+
 
 class mainWindow(QtGui.QMainWindow):
     '''
@@ -47,12 +88,36 @@ class mainWindow(QtGui.QMainWindow):
         if len(fname)<1:
             return
 
+        password, ok = QtGui.QInputDialog.getText(self, "Enter Password", "Password:", QtGui.QLineEdit.Password, "")
+        if ok:
 
+            #read salt
+            f = open('./salt.dat','r')
+            salt = f.read()
+            f.close()
 
+            #read encrypted file
+            f = open(str(fname),'r')
+            d = f.read()
+            f.close()
 
-        self.markets
+            #decrypt file
+            hash_pass = hashlib.sha256(password + salt).digest()
+            decryptor = AES.new(hash_pass, AES.MODE_CBC,d[:AES.block_size])
+            text = decryptor.decrypt(d[AES.block_size:])
 
+            #read data
+            data = json.loads(text)
 
+            for market in data:
+                self.newMarket(data = {'market':market, 'key':data[market]['key'],
+                                       'secret':data[market]['secret'],
+                                       'sample':data[market]['sample']})
+
+        else:
+            return
+
+        #self.markets
 
     def saveAPIdata(self):
         fname = QtGui.QFileDialog.getSaveFileName(self, 'Select Data File to Open', filter = '*.dat')
@@ -60,39 +125,91 @@ class mainWindow(QtGui.QMainWindow):
         if len(fname)<1:
             return
 
+
+        #look for salt, if no salt, generate salt.
         try:
-            f = open('./salt.txt','r')
+            f = open('./salt.dat','r')
             salt = f.read()
             f.close()
         except:
             pre_salt = str(time.time() * random.random() * 1000000) + 'H7gfJ8756Jg7HBJGtbnm856gnnblkjiINBMBV734'
             salt = hashlib.sha512(pre_salt).digest()
-            f = open('./salt.txt','w')
+            f = open('./salt.dat','w')
             f.write(salt)
             f.close()
 
+        #Ask for password
+        while True:
+            password1, ok = QtGui.QInputDialog.getText(self, "Enter Password", "Password:", QtGui.QLineEdit.Password, "")
+            if len(password1)<2:
+                msgBox = QtGui.QMessageBox.warning(self,'Error', 'Error: Password must be greater\nthen two characters')
+            else:
+                if ok:
+                    password2, ok = QtGui.QInputDialog.getText(self, "Re-Enter Password", "Re-Enter:", QtGui.QLineEdit.Password, "")
+                    if ok:
+                        if password1 == password2:
+                            password = password1
+                            break
+                        else:
+                            msgBox = QtGui.QMessageBox.warning(self,'Error', 'Error: Passwords do not match!')
+                    else:
+                        return
+                else:
+                    return
 
-    def newMarket(self):
+        #Generate file
+        hash_pass = hashlib.sha256(password + salt).digest()
+        iv = Random.new().read(AES.block_size)
+        encryptor = AES.new(hash_pass, AES.MODE_CBC,iv)
+
+        saveData = {}
+        for market in self.markets.keys():
+            saveData[market] = {'key':self.markets[market]['key'],
+                                'secret':self.markets[market]['secret'],
+                                'sample':str(self.markets[market]['sample'])}
+
+        text = json.dumps(saveData)
+
+        #pad the text
+        pad_len = 16 - len(text)%16
+        text += " " * pad_len
+        ciphertext = iv + encryptor.encrypt(text)   #prepend the iv parameter to the encrypted data
+
+        #save encrypted file
+        f = open(str(fname),'w')
+        f.write(ciphertext)
+        f.close()
+
+    def newMarket(self, data = None):
         '''
         Create a new market entry.
         '''
+
         rows = self.ui.tableWidget_APIs.rowCount()
         self.ui.tableWidget_APIs.insertRow(rows)
 
         cob = QtGui.QComboBox(self.ui.tableWidget_APIs)
         cob.addItems(marketList.keys())
+        if data:
+            cob.setCurrentIndex(marketList.keys().index(data['market']))
         self.ui.tableWidget_APIs.setCellWidget(rows, 0, cob)
 
         keyEdit = QtGui.QLineEdit()
         keyEdit.setEchoMode(QtGui.QLineEdit.Password)
         keyEdit.setMaximumWidth(120)
+        if data:
+            keyEdit.setText(data['key'])
         self.ui.tableWidget_APIs.setCellWidget(rows, 1, keyEdit)
         secEdit = QtGui.QLineEdit()
         secEdit.setEchoMode(QtGui.QLineEdit.Password)
         secEdit.setMaximumWidth(120)
+        if data:
+            secEdit.setText(data['secret'])
         self.ui.tableWidget_APIs.setCellWidget(rows, 2, secEdit)
         samEdit = QtGui.QLineEdit()
         samEdit.setMaximumWidth(140)
+        if data:
+            samEdit.setText(data['sample'])
         self.ui.tableWidget_APIs.setCellWidget(rows, 3, samEdit)
 
         lastSample = QtGui.QLineEdit('NA')
